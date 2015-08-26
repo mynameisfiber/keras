@@ -22,5 +22,5 @@ setup(name='Keras',
       url='https://github.com/fchollet/keras',
       download_url='https://github.com/fchollet/keras/tarball/0.1.2',
       license='MIT',
-      install_requires=['theano', 'pyyaml', 'h5py'],
+      install_requires=['theano', 'pyyaml', 'h5py', 'protobuf'],
       packages=find_packages())

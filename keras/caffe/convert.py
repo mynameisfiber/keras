@@ -43,9 +43,13 @@ def caffe_to_keras(prototext=None, caffemodel=None, phase='train'):
         else:
             raise Exception('could not load any layers from prototext')
 
+        input_dim = config.input_dim[1:]
+        if not input_dim and config.input_shape:
+            input_dim = config.input_shape[0].dim[1:]
+
         model = model_from_config(layers,
                                   0 if phase == 'train' else 1,
-                                  config.input_dim[1:])
+                                  input_dim)
         return model
 
 

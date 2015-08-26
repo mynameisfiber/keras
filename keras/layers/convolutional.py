@@ -3,6 +3,7 @@ from __future__ import absolute_import
 
 import theano
 import theano.tensor as T
+import theano.tensor.signal.downsample
 
 from .. import activations, initializations, regularizers, constraints
 from ..utils.theano_utils import shared_zeros
