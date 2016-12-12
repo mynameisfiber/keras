@@ -24,7 +24,8 @@ def rnn_test(f):
     return pytest.mark.parametrize("layer_class", [
         recurrent.SimpleRNN,
         recurrent.GRU,
-        recurrent.LSTM
+        recurrent.LSTM,
+        recurrent.PLSTM
     ])(f)
 
 

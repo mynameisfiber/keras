@@ -2,6 +2,7 @@
 from __future__ import absolute_import
 import numpy as np
 
+import theano
 from .. import backend as K
 from .. import activations, initializations, regularizers
 from ..engine import Layer, InputSpec
@@ -861,4 +862,122 @@ class LSTM(Recurrent):
                   'dropout_W': self.dropout_W,
                   'dropout_U': self.dropout_U}
         base_config = super(LSTM, self).get_config()
+        return dict(list(base_config.items()) + list(config.items()))
+
+
+class PLSTM(LSTM):
+    '''Phased Long-Short Term Memory unit - Neil 2016.
+
+    # Arguments
+        output_dim: dimension of the internal projections and the final output.
+        alpha: TODO
+        r_on: TODO
+        s: TODO
+        tau: TODO
+
+    # References
+        - [Phased LSTM: Accelerating Recurrent Network Training for Long or Event-based
+          Sequences](https://papers.nips.cc/paper/6310-phased-lstm-accelerating-recurrent-network-training-for-long-or-event-based-sequences.pdf)
+    '''
+    def __init__(self, output_dim, alpha=0.05, r_on=None, s=None, tau=None,
+                 r_on_regularizer=None, s_regularizer=None, tau_regularizer=None,
+                 **kwargs):
+        self.output_dim = output_dim
+        if isinstance(alpha, (int, float)):
+            alpha = [alpha] * output_dim
+        self.alpha = K.variable(np.asarray(alpha), name='alpha')
+        self.r_on_ = r_on
+        self.s_ = s
+        self.tau_ = tau
+        self.r_on_regularizer = regularizers.get(r_on_regularizer)
+        self.s_regularizer = regularizers.get(s_regularizer)
+        self.tau_regularizer = regularizers.get(tau_regularizer)
+        super(PLSTM, self).__init__(output_dim, **kwargs)
+
+    def build(self, input_shape):
+        lstm_build_shape = list(input_shape)
+        lstm_build_shape[-1] -= 1
+        super(PLSTM, self).build(lstm_build_shape)
+
+        self.input_spec = [InputSpec(shape=input_shape)]
+        self.input_dim = input_shape[2]
+
+        # TODO: initial value of the K.variable
+        if self.r_on_ is None:
+            r_on = np.random.normal(0.5, 0.15, self.output_dim)
+            self.r_on = K.variable(r_on)
+            self.trainable_weights.append(self.r_on)
+        else:
+            self.r_on = self.r_on_
+        if self.s_ is None:
+            s = np.random.normal(0.5, 0.25, self.output_dim)
+            self.s = K.variable(s)
+            self.trainable_weights.append(self.s)
+        else:
+            self.s = self.s_
+        if self.tau_ is None:
+            tau = np.random.normal(0.5, 0.25, self.output_dim)
+            self.tau = K.variable(tau)
+            self.trainable_weights.append(self.tau)
+        else:
+            self.tau = self.tau_
+
+        if self.r_on_regularizer:
+            self.r_on_regularizer.set_param(self.r_on)
+            self.regularizers.append(self.r_on_regularizer)
+        if self.s_regularizer:
+            self.s_regularizer.set_param(self.s)
+            self.regularizers.append(self.s_regularizer)
+        if self.tau_regularizer:
+            self.tau_regularizer.set_param(self.tau)
+            self.regularizers.append(self.tau_regularizer)
+
+    def preprocess_input(self, x):
+        if self.consume_less == 'cpu':
+            raise Exception("consume_less=CPU not supported by PLSTM")
+            # shortcutp = super(PLSTM, self).preprocess_input(x[:, :-1])
+            # shortcut = theano.printing.Print("shortcut:")(shortcutp)
+            # return shortcut  # K.concatenate([shortcut, x[:, -1]], axis=2)
+        else:
+            return x
+
+    def step(self, x, states):
+        h_tm1 = states[0]
+        c_tm1 = states[1]
+        t = K.repeat_elements((x[:, -1] + 1).reshape((-1, 1)), self.output_dim, -1)
+        phi_t = ((t - self.s) % self.tau) / self.tau
+        # TODO: how to deal with the  clock data and how to pass it further
+        # down the network??
+
+        #  implement the linearized timing gate as given in the phased LSTM
+        #  paper by Neil, 2016.
+        #  2 * phi_t / r_on      if            phi_t < r_on / 2
+        #  2 - 2 * phi_t / r_on  if r_on / 2 < phi_t < r_on
+        #  alpha * phi_t         otherwise
+        k = K.switch(phi_t < self.r_on,
+                     2 * phi_t / self.r_on,
+                     self.alpha * phi_t)
+        k += K.switch(K.lesser(self.r_on / 2, phi_t) and K.lesser(phi_t, self.r_on),
+                      2 - 4 * phi_t / self.r_on,
+                      0)
+        k = K.clip(k, 0, 1)
+        # k = K.reshape(k, (-1, 1))
+        # k = K.repeat_elements(k, self.output_dim, -1)
+        # k = theano.printing.Print("k: ")(k)
+
+        _, [h_tilde, c_tilde] = super(PLSTM, self).step(x[:, :-1], states)
+        h = k * h_tilde + (1 - k) * h_tm1
+        c = k * c_tilde + (1 - k) * c_tm1
+        # handt = K.concatenate([h, t], axis=-1)
+        return h, [h, c]
+
+    def get_config(self):
+        base_config = super(PLSTM, self).get_config()
+        config = {'alpha': self.alpha,
+                  'tau': self.tau_,
+                  'r_on': self.r_on_,
+                  's': self.s,
+                  'r_on_regularizer': self.r_on_regularizer.get_config() if self.r_on_regularizer else None,
+                  's_regularizer': self.s_regularizer.get_config() if self.s_regularizer else None,
+                  'tau_regularizer': self.tau_regularizer.get_config() if self.tau_regularizer else None}
         return dict(list(base_config.items()) + list(config.items()))
